@@ -8,6 +8,7 @@ backend/.venv/
 # 环境变量与运行时文件（.env 含密钥，禁止提交）
 .env
 backend/.env
+backend/.env.*.bak
 backend/logs/
 .run/
 

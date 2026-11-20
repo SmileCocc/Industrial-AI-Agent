@@ -46,4 +46,15 @@ MES 工单物料需求中的 `material_code` 与 ERP 物料编码一致。两个
 
 ## AI 服务（8000）
 
-第三阶段实现，接口设计见 [architecture.md](architecture.md) 第 5.3 节。
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/health` | Agent 库连接状态 |
+| POST | `/api/system/model-test` | 验证当前 Magpie 模型是否实际返回原生工具调用 |
+| GET | `/api/agent/tools` | 模型可用的工具名称、描述、参数 JSON Schema |
+| POST | `/api/agent/chat` | 提问，或携带已有 `conversation_id` 追问 |
+| GET | `/api/agent/conversations` | 当前用户历史列表，支持 `page`、`page_size` |
+| GET | `/api/agent/conversations/{id}` | 读取该用户的对话、结果与轨迹 |
+
+请求示例 `{"message":"今天哪些工单缺料，会影响哪些生产计划？"}`。成功响应包含 `conversation_id`、`answer`、`shortage_data`、`tool_calls`、`trace`、`usage` 和 `duration_ms`。`shortage_data` 是组合工具实际计算的数据。模型接入错误通过非 2xx 响应返回，响应的 `detail` 适合直接展示。
+
+第四阶段在 `/api/agent/chat` 成功响应中增加 `analysis_data`。键为本轮执行成功的经营分析场景，值为对应的结构化工具结果。`plan` 包含全厂和分线计划、实际与完成率，`inventory` 包含缺口与主供应商，`equipment` 包含报警设备与关联工单，`efficiency` 包含前日对照、工单缺料和未恢复报警。同一份结果随对话历史保存。

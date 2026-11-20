@@ -1,0 +1,58 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "erp",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "--app-dir",
+        "backend",
+        "erp_service.main:app",
+        "--port",
+        "8001"
+      ],
+      "port": 8001
+    },
+    {
+      "name": "mes",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "--app-dir",
+        "backend",
+        "mes_service.main:app",
+        "--port",
+        "8002"
+      ],
+      "port": 8002
+    },
+    {
+      "name": "agent",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "--app-dir",
+        "backend",
+        "ai_service.main:app",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "frontend/node_modules/vite/bin/vite.js",
+        "frontend",
+        "--config",
+        "frontend/vite.config.ts"
+      ],
+      "port": 5173
+    }
+  ]
+}

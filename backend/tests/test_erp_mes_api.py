@@ -161,7 +161,9 @@ def test_alarms(mes):
     data = ok(mes.get("/api/equipment/alarms", params={"page_size": 200}))
     assert data["total"] >= 30
     week = ok(mes.get("/api/equipment/alarms", params={"start_date": TODAY - timedelta(days=7), "page_size": 200}))
-    assert week["total"] == data["total"]
+    cutoff = (TODAY - timedelta(days=7)).isoformat()
+    expected = {a["alarm_id"] for a in data["items"] if a["start_time"][:10] >= cutoff}
+    assert {a["alarm_id"] for a in week["items"]} == expected
     severe = ok(mes.get("/api/equipment/alarms", params={"line_code": "L02", "level": "严重"}))["items"]
     assert len(severe) >= 3 and any(a["is_active"] for a in severe)
     assert mes.get("/api/equipment/alarms", params={"level": "致命"}).status_code == 422

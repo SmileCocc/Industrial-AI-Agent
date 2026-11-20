@@ -18,7 +18,7 @@ from ai_service.agent.llm import clean
 from ai_service.agent.settings import AgentError, get_agent_settings
 from ai_service.tools import TOOLS, schemas
 from ai_service.tools.operations import operations, totals
-from ai_service.tools.shortage import ToolError, pages
+from ai_service.tools.shortage import ToolError, gather_limited, pages
 from common.auth import get_current_user
 from common.db import check_db
 
@@ -125,17 +125,18 @@ async def mes(path: str, request: Request, user=Depends(get_current_user)):
 async def dashboard(user=Depends(get_current_user)):
     async with reader(user['user_id'], 'dashboard') as get:
         try:
-            eff = await operations(get, 'efficiency')
-            stock = await get('ERP', '/inventory/low-stock', {'page_size': 1})
-            pending = await get('MES', '/work-orders', {'status': '待执行', 'page_size': 1})
-            today = date.fromisoformat(eff['date'])
-            days = [(today - timedelta(days=i)).isoformat() for i in reversed(range(7))]
-            plans = await pages(get, 'MES', '/production-plans', {'start_date': days[0], 'end_date': days[-1]})
+            days = [(date.today() - timedelta(days=i)).isoformat() for i in reversed(range(7))]
+            # 五项指标互不依赖，并行获取；否则刷新一次要串行等待数十次业务请求。
+            eff, stock, pending, plans, categories = await gather_limited([
+                operations(get, 'efficiency'),
+                get('ERP', '/inventory/low-stock', {'page_size': 1}),
+                get('MES', '/work-orders', {'status': '待执行', 'page_size': 1}),
+                pages(get, 'MES', '/production-plans', {'start_date': days[0], 'end_date': days[-1]}),
+                get('ERP', '/materials/categories', {})], 5)
             trend = [dict(date=day, **totals([p for p in plans if p['plan_date'] == day])) for day in days]
-            distribution = []
-            for category in await get('ERP', '/materials/categories', {}):
-                inv = await get('ERP', '/inventory', {'category': category, 'page_size': 1})
-                distribution.append(dict(category=category, count=inv['total']))
+            counts = await gather_limited([get('ERP', '/inventory', {'category': category, 'page_size': 1})
+                                           for category in categories], 5)
+            distribution = [dict(category=category, count=inv['total']) for category, inv in zip(categories, counts)]
             return clean(dict(date=eff['date'], lines=eff['lines'], trend=trend, inventory_distribution=distribution,
                          metrics=dict(**eff['total'], low_stock_count=stock['total'], shortage_order_count=len(eff['shortages']),
                          pending_order_count=pending['total'], today_alarm_count=sum(r['alarms_started_today'] for r in eff['lines']),

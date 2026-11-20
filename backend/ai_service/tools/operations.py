@@ -2,7 +2,7 @@
 from collections import defaultdict
 from datetime import date, timedelta
 
-from .shortage import analyze, chunks, pages
+from .shortage import analyze, chunks, gather_limited, pages
 
 
 def totals(rows):
@@ -20,22 +20,24 @@ async def operations(get, scenario):
         rows = await pages(get, 'ERP', '/inventory/low-stock', {})
         codes = sorted({r['supplier_code'] for r in rows})
         suppliers = {}
-        for batch in chunks(codes, 50):
-            for supplier in await pages(get, 'ERP', '/suppliers', {'codes': ','.join(batch)}):
+        for found in await gather_limited([pages(get, 'ERP', '/suppliers', {'codes': ','.join(b)})
+                                           for b in chunks(codes, 50)]):
+            for supplier in found:
                 suppliers[supplier['supplier_code']] = supplier['name']
         return {'date': day, 'count': len(rows), 'materials': [
             {k: r[k] for k in ('material_code', 'name', 'unit', 'available_stock', 'safety_stock', 'gap_to_safety', 'supplier_code')} |
             {'supplier': suppliers.get(r['supplier_code'])} for r in rows]}
 
-    alarms = await pages(get, 'MES', '/equipment/alarms', {'start_date': start, 'end_date': day})
-    lines = await get('MES', '/production-lines', {})
+    alarms, lines = await gather_limited([pages(get, 'MES', '/equipment/alarms', {'start_date': start, 'end_date': day}),
+                                         get('MES', '/production-lines', {})])
     if scenario == 'equipment':
         devices = defaultdict(list)
         for a in alarms:
             devices[a['equipment_code']].append(a)
         orders = {}
-        for batch in chunks(sorted({a['wo_no'] for a in alarms if a['wo_no']}), 50):
-            for w in await pages(get, 'MES', '/work-orders', {'wo_nos': ','.join(batch)}):
+        for found in await gather_limited([pages(get, 'MES', '/work-orders', {'wo_nos': ','.join(b)})
+                                           for b in chunks(sorted({a['wo_no'] for a in alarms if a['wo_no']}), 50)]):
+            for w in found:
                 orders[w['wo_no']] = {k: w[k] for k in ('status', 'completion_rate', 'is_overdue')}
         return {'start': start, 'end': day, 'alarm_count': len(alarms), 'devices': [
             {'code': code, 'name': group[0]['equipment_name'], 'line': group[0]['line_code'], 'count': len(group),
@@ -49,13 +51,14 @@ async def operations(get, scenario):
         {'line': line['line_code'], 'name': line['name'], **totals([p for p in plans if p['line_code'] == line['line_code']]),
          'alarms_started_today': sum(a['line_code'] == line['line_code'] for a in alarms)} for line in lines]}
     if scenario == 'efficiency':
-        prior = await pages(get, 'MES', '/production-plans', {'plan_date': yesterday})
-        shortage = await analyze(get, None)
-        orders = await pages(get, 'MES', '/work-orders', {'start_date': day, 'end_date': day})
+        # 昨日计划、缺料计算、当日工单和未恢复报警互不依赖，并行获取。
+        prior, shortage, orders, active = await gather_limited([
+            pages(get, 'MES', '/production-plans', {'plan_date': yesterday}), analyze(get, None),
+            pages(get, 'MES', '/work-orders', {'start_date': day, 'end_date': day}),
+            pages(get, 'MES', '/equipment/alarms', {'active_only': True})])
         result.update(previous_date=yesterday, previous=totals(prior),
                       delayed_orders=[w['wo_no'] for w in orders if w['is_overdue']],
                       shortages={w['wo_no']: [(g['material_code'], g['shortage_qty']) for g in w['shortages']]
                                  for w in shortage['work_orders'] if w['shortages']},
-                      active_alarms=[{'id': a['alarm_id'], 'line': a['line_code'], 'order': a['wo_no']} for a in
-                                     await pages(get, 'MES', '/equipment/alarms', {'active_only': True})])
+                      active_alarms=[{'id': a['alarm_id'], 'line': a['line_code'], 'order': a['wo_no']} for a in active])
     return result

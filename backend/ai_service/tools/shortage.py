@@ -1,4 +1,5 @@
 """按未发料需求竞争分配 ERP 可用库存，只读，无库存预留副作用。"""
+import asyncio
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -11,6 +12,17 @@ class ToolError(ValueError):
 def chunks(values, size):
     for i in range(0, len(values), size):
         yield values[i:i + size]
+
+
+async def gather_limited(aws, limit=8):
+    # 互不依赖的业务请求并行执行，同时限制并发，避免一次打满 ERP/MES。
+    gate = asyncio.Semaphore(limit)
+
+    async def run(aw):
+        async with gate:
+            return await aw
+
+    return await asyncio.gather(*(run(aw) for aw in aws))
 
 
 async def pages(get, system, path, params):
@@ -72,8 +84,9 @@ async def analyze(get, wo_nos):
         raise ToolError('目标超过 50 张，请指定工单号')
     demands = {}
     if targets:
-        for batch in chunks(all_nos, 50):
-            rows = await get('MES', '/work-orders/materials', {'wo_nos': ','.join(batch)})
+        batches = list(chunks(all_nos, 50))
+        for rows in await gather_limited([get('MES', '/work-orders/materials', {'wo_nos': ','.join(b)})
+                                          for b in batches]):
             demands.update({r['wo_no']: r['materials'] for r in rows})
         if set(demands) != set(all_nos):
             raise ToolError('工单需求数据不完整')
@@ -81,19 +94,20 @@ async def analyze(get, wo_nos):
     if len(codes) > 250:
         raise ToolError('目标物料超过单次计算上限')
     inventory = {}
-    for batch in chunks(codes, 50):
-        rows = await pages(get, 'ERP', '/inventory', {'codes': ','.join(batch)})
+    batches = list(chunks(codes, 50))
+    for rows in await gather_limited([pages(get, 'ERP', '/inventory', {'codes': ','.join(b)}) for b in batches]):
         inventory.update({r['material_code']: r for r in rows})
     if set(inventory) != set(codes):
         raise ToolError('ERP 库存数据不完整')
     results = allocate(orders, demands, inventory, targets) if targets else []
-    transactions = {}
-    gap_codes = sorted({g['material_code'] for w in results for g in w['shortages']})
-    for code in gap_codes[:50]:
-        transactions[code] = await get('ERP', '/inventory/transactions',
-                                       {'material_code': code, 'page': 1, 'page_size': 5})
-    for w in results:
-        w['plans'] = await get('MES', '/production-plans', {'wo_no': w['wo_no'], 'page': 1, 'page_size': 10})
+    gap_codes = sorted({g['material_code'] for w in results for g in w['shortages']})[:50]
+    evidence = await gather_limited([get('ERP', '/inventory/transactions',
+                                         {'material_code': code, 'page': 1, 'page_size': 5}) for code in gap_codes])
+    transactions = dict(zip(gap_codes, evidence))
+    plans = await gather_limited([get('MES', '/production-plans', {'wo_no': w['wo_no'], 'page': 1, 'page_size': 10})
+                                 for w in results])
+    for w, detail in zip(results, plans):
+        w['plans'] = detail
     return {'work_orders': results, 'total': len(results), 'shortage_order_count': sum(bool(w['shortages']) for w in results),
             'competition_order_count': len(orders), 'transactions': transactions,
             'transaction_evidence_truncated': len(gap_codes) > 50 or any(w['shortage_material_total'] > 50 for w in results)}

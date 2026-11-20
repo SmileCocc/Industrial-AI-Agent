@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ElButton, ElInput } from 'element-plus'
+import type { InputInstance } from 'element-plus'
 import { ArrowUp, Boxes, CalendarDays, ChartNoAxesCombined, History, MessageSquare, PackageSearch, Plus, RefreshCw, Wrench } from 'lucide-vue-next'
 import IndustrialBlueprint from '../components/assistant/IndustrialBlueprint.vue'
 import AssistantTurn from '../components/assistant/AssistantTurn.vue'
@@ -14,7 +14,7 @@ const prompts = [
   { icon: Wrench, text: '近七天有哪些设备异常？' },
   { icon: ChartNoAxesCombined, text: '分析今天的生产效率及影响因素。' },
 ]
-const showHistory = ref(false), input = ref<InstanceType<typeof ElInput>>(), thread = ref<HTMLElement>()
+const showHistory = ref(false), input = ref<InputInstance>(), thread = ref<HTMLElement>()
 const elapsed = ref(0), disabled = computed(() => s.sending || s.loading || !!s.detailError)
 watch(() => s.sending, (pending, _, cleanup) => {
   if (!pending) return

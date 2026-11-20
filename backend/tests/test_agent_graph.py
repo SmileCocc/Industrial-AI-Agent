@@ -83,6 +83,14 @@ def test_native_loop(setup):
     assert 'fixture-private-value' not in str((result, requests))
 
 
+def test_combined_result_asks_to_wrap_up(setup):
+    # 组合工具已给出完整结果时，回传给模型的数据带收尾提示，避免重复查询拉长上下文。
+    requests, _ = setup(PROBE, reply(calls=[call()]), reply('报告'))
+    chat()
+    content = json.loads(requests[-1]['messages'][-1]['content'])
+    assert content['_notice'] == graph.NOTICE and content['rows'] == ['[已脱敏]']
+
+
 def test_text_does_not_execute(setup):
     _, executed = setup(PROBE, reply(json.dumps(call())))
     assert not chat()['tool_calls'] and not executed
